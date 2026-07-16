@@ -155,3 +155,23 @@ def test_get_watchlist_sorts_alphabetically(app, sample_user):
         titles = [f["title"] for f in watchlist]
 
         assert titles == ["Alien", "Zootopia"]
+
+
+# ── Visibility ────────────────────────────────────────────────────────────
+
+def test_add_to_watchlist_respects_explicit_public_false(app, sample_user, sample_film):
+    """
+    Passing public=False should override the True default.
+    """
+    with app.app_context():
+        entry = add_to_watchlist(user_id=sample_user, film_id=sample_film, public=False)
+        assert entry.public is False
+
+
+def test_add_to_watchlist_defaults_to_public_true(app, sample_user, sample_film):
+    """
+    Omitting the public argument should default the entry to public.
+    """
+    with app.app_context():
+        entry = add_to_watchlist(user_id=sample_user, film_id=sample_film)
+        assert entry.public is True
