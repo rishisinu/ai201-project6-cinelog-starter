@@ -8,7 +8,37 @@
 > UUID-migration rebase.
 
 ## AI Usage
-<!-- Fill in at the end -->
+I used Claude Code throughout this exercise for orientation, implementation, and — importantly —
+as a devil's-advocate check on the two design-decision responses (Comments 4 and 5), rather than
+to generate those arguments outright.
+
+- **Orientation:** had it read `models.py`, `services/collection_service.py`, and
+  `tests/test_collection.py` before touching any review comment, to establish the
+  `verb_to_noun` naming pattern, the dedup-check shape, and the fixture/test structure to mirror.
+- **Implementation:** wrote the rename, dedup check, `remove_from_watchlist`, the visibility
+  toggle, and the tests directly, following those established patterns rather than inventing new
+  ones.
+- **Devil's advocate on Comments 4 and 5:** after drafting my initial position on both the
+  default-visibility and sort-order questions, I explicitly stress-tested each one — "what
+  counterargument would a careful reviewer raise, and what tradeoff am I underweighting?" For
+  Comment 4, that surfaced that citing `CollectionEntry`'s total absence of a privacy concept as
+  "precedent" for a *deliberate* public default was weaker than I'd framed it, and that shipping
+  an optional `public` param doesn't fully solve the default-effects problem if most callers never
+  set it — I kept my position (public=True) but re-grounded it on CineLog's community-app framing
+  alone, dropping the weaker precedent argument. For Comment 5, it surfaced that alphabetical
+  order is just as arbitrary as add-time from the model's perspective, and that cross-feature
+  consistency has real value I was underweighting — I kept alphabetical but sharpened the argument
+  around list *stability* (a pick-from list you return to shouldn't reshuffle every time you add
+  something) rather than resting on "add-time falsely implies priority" alone. Both stress-test
+  passes and their resulting revisions are recorded inline under Comments 4 and 5 above, not
+  hidden.
+- **Rebase mechanics:** used AI to script the interactive rebase (`GIT_SEQUENCE_EDITOR`/
+  `GIT_EDITOR` automation) so the reordering, squashing, and rewording could be driven
+  non-interactively and reviewed as a diff before/after, rather than working through the editor by
+  hand — the actual decisions about what to squash and how to word each commit were mine.
+- **What AI did not do:** it did not decide the public-visibility default or the sort-order
+  position — those conclusions, and the reasoning behind them, are mine, reached by reasoning
+  about CineLog's specific data model and product framing (see Comments 4 and 5).
 
 ## Comment 1 — Rename
 **What I did:** Renamed `save_to_watchlist()` to `add_to_watchlist()` in
@@ -190,7 +220,69 @@ Comment 4 position actually livable: callers who disagree with the default don't
 it — they can set `public: false` at creation time instead of adding-then-editing.
 
 ## Commit history
-<!-- git log --oneline output, added after Milestone 4 -->
+
+Final `git log --oneline origin/main..HEAD` (11 commits, linear, no merges):
+
+```
+4a5f634 docs: add pr-response.md documenting all six review comment responses
+3272a7a fix: restore WatchlistEntry model and use UUID film_id after main's refactor
+ecb3ccf feat: add public visibility parameter to add_to_watchlist
+d8be1e1 test: add coverage for get_watchlist alphabetical sort order
+c1f8867 fix: add missing Film-WatchlistEntry relationship for get_watchlist
+bdfbe53 feat: add remove_from_watchlist endpoint and tests
+6554408 test: add tests for add_to_watchlist happy path, duplicate, and nonexistent film
+b33b646 fix: add deduplication check to prevent duplicate watchlist entries
+25f10ae fix: rename save_to_watchlist to add_to_watchlist per naming convention
+348456b fix: update film retrieval method to use db.session.get in collection and watchlist services
+357af22 feat: add watchlist model, service, and endpoints
+```
+
+Rewritten from the original branch via a scripted `git rebase -i origin/main`: reworded the
+non-conventional initial commit ("added watchlist model and endpoint fixed a bug more changes")
+into `feat: add watchlist model, service, and endpoints`; reordered the four incremental
+`pr-response.md` commits to the end of the sequence (safe — they only ever touched that one file,
+no overlap with code commits) and squashed them into a single `docs:` commit with `fixup`, keeping
+one clear "why" per commit instead of a trail of doc-editing noise. `git log --oneline
+origin/main..HEAD --merges` returns nothing.
 
 ## PR Description
-<!-- Written at the end — feature overview, design decisions, manual testing steps -->
+
+**What this feature does:** Adds a watchlist to CineLog — a separate list from a user's collection
+(films already watched) for films a user wants to watch later. `GET /watchlist/<user_id>` returns
+a user's watchlist sorted alphabetically by title; `POST /watchlist/<user_id>/add` adds a film
+(with optional `public` visibility, defaulting to `True`); `DELETE /watchlist/<user_id>/remove`
+removes one. Duplicate adds are rejected (409) instead of creating repeat entries, and adding a
+nonexistent film returns 404.
+
+**Design decisions** (full reasoning in the sections above):
+- **Default visibility (`public=True`):** matches the precedent set by `CollectionEntry`, which
+  has no privacy concept at all, and CineLog's framing as a community app where visible activity
+  is the point. The `public` parameter on the add endpoint lets any caller override this per entry
+  at creation time.
+- **Sort order (alphabetical, not date-added):** a watchlist is a list you pick *from*, not a
+  timeline you scan chronologically like a collection log — alphabetical gives a stable position
+  in the list across additions, and doesn't imply a priority ordering the data doesn't actually
+  have. Revisited if a future "priority"/reorder feature is added.
+
+**Manual testing steps:**
+```bash
+python -m venv .venv
+source .venv/Scripts/activate   # or .venv\Scripts\activate.bat on Windows cmd
+pip install -r requirements.txt
+python app.py
+```
+With the server running on `http://127.0.0.1:5000`:
+1. Create a user and a film through the existing `/films` and collection flows (or via direct DB
+   inserts / the Python shell), noting their UUIDs.
+2. `POST /watchlist/<user_id>/add` with `{"film_id": "<uuid>"}` → expect `201` and the created
+   entry with `"public": true`.
+3. Repeat the same request → expect `409` (`AlreadyInWatchlistError`).
+4. `POST /watchlist/<user_id>/add` with `{"film_id": "<some other uuid>", "public": false}` →
+   expect `201` with `"public": false`.
+5. `GET /watchlist/<user_id>` → expect both films, sorted alphabetically by title regardless of
+   add order.
+6. `DELETE /watchlist/<user_id>/remove` with `{"film_id": "<uuid>"}` → expect `200`; repeating it
+   → expect `404` (`NotInWatchlistError`).
+7. `POST /watchlist/<user_id>/add` with a nonexistent `film_id` → expect `404`.
+
+Or run the automated suite: `pytest tests/ -v` (12 tests, covering all of the above).
