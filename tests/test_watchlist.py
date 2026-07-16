@@ -131,3 +131,27 @@ def test_remove_from_watchlist_not_present_raises(app, sample_user, sample_film)
     with app.app_context():
         with pytest.raises(NotInWatchlistError):
             remove_from_watchlist(user_id=sample_user, film_id=sample_film)
+
+
+# ── Sort order ────────────────────────────────────────────────────────────
+
+def test_get_watchlist_sorts_alphabetically(app, sample_user):
+    """
+    get_watchlist() should return films sorted alphabetically by title,
+    regardless of the order they were added in (see pr-response.md, Comment 5).
+    """
+    with app.app_context():
+        film_z = Film(title="Zootopia", year=2016, genre="Animation")
+        film_a = Film(title="Alien", year=1979, genre="Horror")
+        db.session.add_all([film_z, film_a])
+        db.session.commit()
+
+        # Add "Zootopia" first, then "Alien" — insertion order is the opposite
+        # of alphabetical order, so this proves the sort isn't by date_added.
+        add_to_watchlist(user_id=sample_user, film_id=film_z.id)
+        add_to_watchlist(user_id=sample_user, film_id=film_a.id)
+
+        watchlist = get_watchlist(sample_user)
+        titles = [f["title"] for f in watchlist]
+
+        assert titles == ["Alien", "Zootopia"]
